@@ -1,1 +1,21 @@
 40% of the tokens were taken out back and shot.
+
+Prompt 1 — Chart and market data
+You own the NVDA chart and market-data section of our stock-tracking website. First inspect the existing project and coordinate with the other contributors on the framework, file ownership, and shared interfaces. Don’t replace the project structure or edit files assigned to someone else.
+Build the main chart area for NVIDIA (NVDA), using the linked NYSE quote page as the requested data source: NYSE NVDA quote. Show candlesticks, with daily candles as the default and finer intervals when the available data supports them. Make the chart easy to read and responsive to different screen sizes.
+Check whether the NYSE page provides data that this project can access and use. Don’t claim real-time updates unless the source actually supports them; document any access, licensing, or refresh-rate limits, and agree on a compatible fallback with the team if needed. Keep data fetching behind a clearly defined interface so the rest of the app isn’t tied to one provider.
+Deliver your code, the data interface other sections should use, and a short note describing the source, supported intervals, refresh behavior, and limitations.
+Prompt 2 — Stock overview and navigation
+You own the NVDA stock overview and navigation section. First inspect the existing project and coordinate with the other contributors on the framework, file ownership, and shared interfaces. Don’t replace the project structure or edit files assigned to someone else.
+Build a clear header and stock summary for NVIDIA: company name and ticker, current or latest available price, market status, and daily change when the data source provides them. Include useful controls for selecting chart intervals, with daily as the default and finer intervals available when supported. Make it clear when prices are delayed or the market is closed.
+Use the chart/data interface agreed with the chart owner; don’t create a separate, conflicting stock-data source. Match the site’s navy-blue theme, follow the project’s existing styling conventions, and make the layout work on desktop and mobile.
+Deliver your code and a short note listing the components and data fields you need from the shared interface.
+Prompt 3 — Market context bubble
+You own the bottom-of-screen market context bubble. First inspect the existing project and coordinate with the other contributors on the framework, file ownership, and shared interfaces. Don’t replace the project structure or edit files assigned to someone else.
+Build a small, accessible bubble or panel that gives useful context beyond the candlestick chart: for example, relevant NVIDIA news, company announcements, or broader market events. The user has no preference about whether it includes educational chart observations, so use your judgment and label facts, interpretations, and timestamps clearly.
+Do not present personalized financial advice or unsupported buy/sell recommendations. Check what reliable sources the project can access; if live news is unavailable, show a clear empty or unavailable state instead of inventing updates. Use the shared project styling and make the bubble usable on mobile, keyboard, and screen readers.
+Deliver your code, the data interface or source requirements for context items, and a short note about freshness and limitations.
+Prompt 4 — App integration and visual consistency
+You own the integration and visual consistency section. First inspect the existing project and coordinate with the other contributors on the framework, file ownership, and shared interfaces. Don’t replace the project structure or edit files assigned to someone else.
+Bring the chart, stock overview, and context bubble together into a clear stock-tracking page. Establish a cohesive navy-blue theme, readable contrast, sensible spacing, and responsive behavior. Make sure the page communicates the selected candle interval and any data delay or market-closed state exposed by the shared interfaces.
+Agree on component boundaries and integration points with the other contributors before wiring their work together. Don’t invent market values or claim real-time behavior the data source does not provide. Leave the project in a state the team can run, and report any integration issues or assumptions.
