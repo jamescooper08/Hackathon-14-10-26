@@ -1,0 +1,576 @@
+<script>
+  const state = {
+    symbol: "NVDA",
+    interval: "1D",
+    searchTimer: null,
+    quote: null,
+    candles: null
+  };
+
+  const els = {
+    companyName: document.getElementById("companyName"),
+    ticker: document.getElementById("ticker"),
+    price: document.getElementById("price"),
+    change: document.getElementById("change"),
+    note: document.getElementById("note"),
+    exchange: document.getElementById("exchange"),
+    asOf: document.getElementById("asOf"),
+    intervalLabel: document.getElementById("intervalLabel"),
+    statusLabel: document.getElementById("statusLabel"),
+    marketStatus: document.getElementById("marketStatus"),
+    chartContainer: document.getElementById("chartContainer"),
+    searchInput: document.getElementById("searchInput"),
+    results: document.getElementById("results"),
+    resultsList: document.getElementById("resultsList"),
+    contextList: document.getElementById("contextList"),
+    contextStatus: document.getElementById("contextStatus")
+  };
+
+  function money(value, currency = "USD") {
+    if (value == null || !Number.isFinite(Number(value))) return "—";
+
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: "currency",
+        currency,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }).format(Number(value));
+    } catch {
+      return `${currency} ${Number(value).toFixed(2)}`;
+    }
+  }
+
+  function signedMoney(value, currency = "USD") {
+    if (value == null || !Number.isFinite(Number(value))) return "—";
+
+    const number = Number(value);
+    const sign = number >= 0 ? "+" : "-";
+
+    return `${sign}${money(Math.abs(number), currency)}`;
+  }
+
+  function percent(value) {
+    if (value == null || !Number.isFinite(Number(value))) return "—";
+    const number = Number(value);
+    return `${number >= 0 ? "+" : ""}${number.toFixed(2)}%`;
+  }
+
+  function formatTimestamp(seconds) {
+    if (!Number.isFinite(Number(seconds))) return "—";
+
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short"
+    }).format(new Date(Number(seconds) * 1000));
+  }
+
+  function setStatus(label, closed = false) {
+    els.statusLabel.textContent = label;
+
+    const dot = els.marketStatus.querySelector(".status-dot");
+    if (dot) dot.classList.toggle("closed", closed);
+  }
+
+  function updateIntervals() {
+    document.querySelectorAll(".interval-btn").forEach(button => {
+      button.classList.toggle(
+        "active",
+        button.dataset.interval === state.interval
+      );
+    });
+
+    els.intervalLabel.textContent = state.interval;
+  }
+
+  function showChartMessage(message, error = false) {
+    els.chartContainer.innerHTML = "";
+
+    const element = document.createElement("div");
+    element.className = `chart-empty${error ? " error" : ""}`;
+    element.textContent = message;
+
+    els.chartContainer.appendChild(element);
+  }
+
+  async function fetchJson(url) {
+    const response = await fetch(url, {
+      headers: { Accept: "application/json" }
+    });
+
+    const body = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(
+        body.message ||
+        body.error ||
+        `Market data request failed with HTTP ${response.status}.`
+      );
+    }
+
+    return body;
+  }
+
+  async function getMarketData(symbol, interval) {
+    /*
+     * The repository's shared market-data layer uses /api/market/*.
+     * The fallback keeps the temporary root server.js frontend usable.
+     */
+    try {
+      const [candles, quote] = await Promise.all([
+        fetchJson(
+          `/api/market/candles?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}`
+        ),
+        fetchJson(
+          `/api/market/quote?symbol=${encodeURIComponent(symbol)}`
+        )
+      ]);
+
+      return { candles, quote };
+    } catch (marketApiError) {
+      const legacyCandles = await fetchJson(
+        `/api/candles?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}`
+      );
+
+      return {
+        candles: {
+          symbol: legacyCandles.symbol || symbol,
+          interval,
+          currency: legacyCandles.currency || "USD",
+          timezone: legacyCandles.timezone || "UTC",
+          bars: legacyCandles.bars || [],
+          source: {
+            note: "Legacy Twelve Data candle endpoint."
+          }
+        },
+        quote: null,
+        marketApiError
+      };
+    }
+  }
+
+  function renderQuote(quote, candles) {
+    const fallbackBars = candles?.bars || [];
+    const lastBar = fallbackBars[fallbackBars.length - 1];
+    const previousBar = fallbackBars[fallbackBars.length - 2];
+
+    const currency =
+      quote?.currency ||
+      candles?.currency ||
+      "USD";
+
+    const price =
+      quote?.price ??
+      (lastBar ? Number(lastBar.close) : null);
+
+    const change =
+      quote?.change ??
+      (
+        lastBar && previousBar
+          ? Number(lastBar.close) - Number(previousBar.close)
+          : null
+      );
+
+    const changePercent =
+      quote?.changePercent ??
+      (
+        change != null &&
+        previousBar &&
+        Number(previousBar.close) !== 0
+          ? (change / Number(previousBar.close)) * 100
+          : null
+      );
+
+    const companyName =
+      quote?.name ||
+      candles?.symbol ||
+      state.symbol;
+
+    const exchange =
+      quote?.exchange ||
+      "Exchange unavailable";
+
+    els.companyName.textContent = companyName;
+    els.ticker.textContent = `${exchange}: ${state.symbol}`;
+    els.exchange.textContent = exchange;
+    els.price.textContent = money(price, currency);
+
+    if (change != null || changePercent != null) {
+      const negative = Number(change ?? changePercent) < 0;
+      els.change.className = `change ${negative ? "down" : "up"}`;
+
+      const changeParts = [];
+
+      if (change != null) {
+        changeParts.push(signedMoney(change, currency));
+      }
+
+      if (changePercent != null) {
+        changeParts.push(`(${percent(changePercent)})`);
+      }
+
+      els.change.textContent = changeParts.join(" ");
+    } else {
+      els.change.className = "change";
+      els.change.textContent = "Change unavailable";
+    }
+
+    if (quote?.asOf) {
+      els.asOf.textContent = formatTimestamp(quote.asOf);
+    } else if (candles?.fetchedAt) {
+      els.asOf.textContent = formatTimestamp(
+        Math.floor(candles.fetchedAt / 1000)
+      );
+    } else {
+      els.asOf.textContent = "—";
+    }
+
+    if (quote?.marketStatus) {
+      const labels = {
+        open: "Market open",
+        closed: "Market closed",
+        pre: "Pre-market",
+        post: "After-hours",
+        "pre-market": "Pre-market",
+        "after-hours": "After-hours",
+        unknown: "Market status unavailable"
+      };
+
+      setStatus(
+        labels[quote.marketStatus] || "Market status unavailable",
+        quote.marketStatus === "closed"
+      );
+    } else {
+      setStatus("Market status unavailable");
+    }
+
+    const sourceNote =
+      quote?.source?.note ||
+      candles?.source?.note ||
+      "Latest available market data.";
+
+    els.note.textContent = sourceNote;
+  }
+
+  function renderCandles(series) {
+    const candles = Array.isArray(series?.bars)
+      ? series.bars
+      : [];
+
+    state.candles = series;
+
+    if (!candles.length) {
+      showChartMessage("No candle data is available for this interval.", true);
+      return;
+    }
+
+    const width = Math.max(
+      els.chartContainer.clientWidth || 800,
+      320
+    );
+
+    const height = 420;
+    const margin = {
+      top: 18,
+      right: 18,
+      bottom: 26,
+      left: 54
+    };
+
+    const chartWidth =
+      width - margin.left - margin.right;
+
+    const chartHeight =
+      height - margin.top - margin.bottom;
+
+    const lows = candles.map(bar => Number(bar.low));
+    const highs = candles.map(bar => Number(bar.high));
+
+    const minValue = Math.min(...lows);
+    const maxValue = Math.max(...highs);
+    const range = maxValue - minValue || 1;
+    const padding = range * 0.12;
+
+    const yMin = minValue - padding;
+    const yMax = maxValue + padding;
+
+    const xFor = index => {
+      if (candles.length === 1) {
+        return margin.left + chartWidth / 2;
+      }
+
+      return margin.left +
+        (index / (candles.length - 1)) * chartWidth;
+    };
+
+    const yFor = value => {
+      const ratio = (value - yMin) / (yMax - yMin);
+
+      return margin.top +
+        chartHeight -
+        ratio * chartHeight;
+    };
+
+    const svg = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "svg"
+    );
+
+    svg.setAttribute(
+      "viewBox",
+      `0 0 ${width} ${height}`
+    );
+
+    svg.setAttribute("role", "img");
+    svg.setAttribute(
+      "aria-label",
+      `${state.symbol} ${state.interval} candlestick chart`
+    );
+
+    for (let index = 0; index <= 5; index += 1) {
+      const y =
+        margin.top +
+        (chartHeight / 5) * index;
+
+      const line = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "line"
+      );
+
+      line.setAttribute("x1", margin.left);
+      line.setAttribute("x2", width - margin.right);
+      line.setAttribute("y1", y);
+      line.setAttribute("y2", y);
+      line.setAttribute("stroke", "rgba(153,178,209,.18)");
+
+      svg.appendChild(line);
+    }
+
+    const topLabel = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "text"
+    );
+
+    topLabel.setAttribute("x", "8");
+    topLabel.setAttribute("y", String(margin.top + 8));
+    topLabel.setAttribute("fill", "#a9bfd8");
+    topLabel.setAttribute("font-size", "11");
+    topLabel.textContent = money(maxValue, series.currency || "USD");
+    svg.appendChild(topLabel);
+
+    const bottomLabel = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "text"
+    );
+
+    bottomLabel.setAttribute("x", "8");
+    bottomLabel.setAttribute("y", String(height - 10));
+    bottomLabel.setAttribute("fill", "#a9bfd8");
+    bottomLabel.setAttribute("font-size", "11");
+    bottomLabel.textContent = money(minValue, series.currency || "USD");
+    svg.appendChild(bottomLabel);
+
+    candles.forEach((bar, index) => {
+      const open = Number(bar.open);
+      const high = Number(bar.high);
+      const low = Number(bar.low);
+      const close = Number(bar.close);
+
+      const rising = close >= open;
+      const color = rising ? "#64d6a2" : "#ff8b91";
+      const x = xFor(index);
+
+      const wick = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "line"
+      );
+
+      wick.setAttribute("x1", x);
+      wick.setAttribute("x2", x);
+      wick.setAttribute("y1", yFor(high));
+      wick.setAttribute("y2", yFor(low));
+      wick.setAttribute("stroke", color);
+      wick.setAttribute("stroke-width", "1.4");
+
+      svg.appendChild(wick);
+
+      const body = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "rect"
+      );
+
+      const bodyTop = yFor(Math.max(open, close));
+      const bodyBottom = yFor(Math.min(open, close));
+
+      body.setAttribute("x", x - 4);
+      body.setAttribute("y", bodyTop);
+      body.setAttribute("width", "8");
+      body.setAttribute(
+        "height",
+        Math.max(2, bodyBottom - bodyTop)
+      );
+      body.setAttribute("rx", "1.5");
+      body.setAttribute("fill", color);
+
+      const candleDate = Number.isFinite(Number(bar.time))
+        ? new Date(Number(bar.time) * 1000).toLocaleString()
+        : String(bar.time || "");
+
+      body.setAttribute(
+        "aria-label",
+        `${candleDate}. Open ${money(open, series.currency)}. High ${money(high, series.currency)}. Low ${money(low, series.currency)}. Close ${money(close, series.currency)}.`
+      );
+
+      const title = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "title"
+      );
+
+      title.textContent =
+        `${candleDate} · ` +
+        `O ${money(open, series.currency)} · ` +
+        `H ${money(high, series.currency)} · ` +
+        `L ${money(low, series.currency)} · ` +
+        `C ${money(close, series.currency)}`;
+
+      body.appendChild(title);
+      svg.appendChild(body);
+    });
+
+    const note = document.createElement("div");
+    note.className = "chart-note";
+    note.textContent = `${state.interval} candles · ${series.currency || "USD"}`;
+
+    els.chartContainer.replaceChildren(svg, note);
+  }
+
+  async function loadData(symbol = state.symbol, interval = state.interval) {
+    state.symbol = String(symbol || "NVDA").toUpperCase();
+    state.interval = interval || "1D";
+
+    updateIntervals();
+    showChartMessage("Loading market data…");
+
+    els.note.textContent = "Loading latest available market data…";
+
+    try {
+      const { candles, quote, marketApiError } =
+        await getMarketData(state.symbol, state.interval);
+
+      state.quote = quote;
+      state.candles = candles;
+
+      renderQuote(quote, candles);
+      renderCandles(candles);
+
+      if (marketApiError) {
+        els.note.textContent =
+          "Using the temporary legacy data endpoint. " +
+          "The shared market-data route is not mounted in server.js.";
+      }
+
+      loadContext(state.symbol);
+    } catch (error) {
+      setStatus("Market status unavailable");
+
+      els.price.textContent = "—";
+      els.change.className = "change";
+      els.change.textContent = "Unavailable";
+      els.note.textContent = error.message;
+      els.exchange.textContent = "—";
+      els.asOf.textContent = "—";
+
+      showChartMessage(error.message, true);
+      renderContextError(error.message);
+    }
+  }
+
+  async function loadContext(symbol) {
+    els.contextStatus.textContent = "Loading…";
+
+    try {
+      const data = await fetchJson(
+        `/api/context?symbol=${encodeURIComponent(symbol)}`
+      );
+
+      const items = Array.isArray(data.items)
+        ? data.items
+        : [];
+
+      els.contextStatus.textContent =
+        data.status === "available"
+          ? "Live"
+          : "Unavailable";
+
+      if (!items.length) {
+        els.contextList.innerHTML = `
+          <div class="context-item">
+            <h4>Context unavailable</h4>
+            <p>${data.message || "No market context is available."}</p>
+            <small>${data.source || "No source configured"}</small>
+          </div>
+        `;
+        return;
+      }
+
+      els.contextList.innerHTML = "";
+
+      items.slice(0, 3).forEach(item => {
+        const card = document.createElement("article");
+        card.className = "context-item";
+
+        card.innerHTML = `
+          <h4>${item.title || item.headline || "Market context"}</h4>
+          <p>${item.summary || item.description || item.content || ""}</p>
+          <small>${item.source || item.publisher || ""}</small>
+        `;
+
+        els.contextList.appendChild(card);
+      });
+    } catch (error) {
+      renderContextError(error.message);
+    }
+  }
+
+  function renderContextError(message) {
+    els.contextStatus.textContent = "Unavailable";
+
+    els.contextList.innerHTML = `
+      <div class="context-item">
+        <h4>Context unavailable</h4>
+        <p>${message || "Market context is unavailable."}</p>
+      </div>
+    `;
+  }
+
+  document.querySelectorAll(".interval-btn").forEach(button => {
+    button.addEventListener("click", () => {
+      loadData(state.symbol, button.dataset.interval);
+    });
+  });
+
+  document.getElementById("searchBtn").addEventListener("click", () => {
+    const symbol = els.searchInput.value.trim();
+
+    if (symbol) {
+      els.results.classList.remove("visible");
+      loadData(symbol, state.interval);
+    }
+  });
+
+  els.searchInput.addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+
+      const symbol = els.searchInput.value.trim();
+
+      if (symbol) {
+        els.results.classList.remove("visible");
+        loadData(symbol, state.interval);
+      }
+    }
+  });
+
+  updateIntervals();
+  loadData("NVDA", "1D");
+</script>
