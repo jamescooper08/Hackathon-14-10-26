@@ -1,576 +1,1105 @@
-<script>
-  const state = {
-    symbol: "NVDA",
-    interval: "1D",
-    searchTimer: null,
-    quote: null,
-    candles: null
-  };
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CandleView — NVDA</title>
 
-  const els = {
-    companyName: document.getElementById("companyName"),
-    ticker: document.getElementById("ticker"),
-    price: document.getElementById("price"),
-    change: document.getElementById("change"),
-    note: document.getElementById("note"),
-    exchange: document.getElementById("exchange"),
-    asOf: document.getElementById("asOf"),
-    intervalLabel: document.getElementById("intervalLabel"),
-    statusLabel: document.getElementById("statusLabel"),
-    marketStatus: document.getElementById("marketStatus"),
-    chartContainer: document.getElementById("chartContainer"),
-    searchInput: document.getElementById("searchInput"),
-    results: document.getElementById("results"),
-    resultsList: document.getElementById("resultsList"),
-    contextList: document.getElementById("contextList"),
-    contextStatus: document.getElementById("contextStatus")
-  };
-
-  function money(value, currency = "USD") {
-    if (value == null || !Number.isFinite(Number(value))) return "—";
-
-    try {
-      return new Intl.NumberFormat(undefined, {
-        style: "currency",
-        currency,
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-      }).format(Number(value));
-    } catch {
-      return `${currency} ${Number(value).toFixed(2)}`;
-    }
-  }
-
-  function signedMoney(value, currency = "USD") {
-    if (value == null || !Number.isFinite(Number(value))) return "—";
-
-    const number = Number(value);
-    const sign = number >= 0 ? "+" : "-";
-
-    return `${sign}${money(Math.abs(number), currency)}`;
-  }
-
-  function percent(value) {
-    if (value == null || !Number.isFinite(Number(value))) return "—";
-    const number = Number(value);
-    return `${number >= 0 ? "+" : ""}${number.toFixed(2)}%`;
-  }
-
-  function formatTimestamp(seconds) {
-    if (!Number.isFinite(Number(seconds))) return "—";
-
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short"
-    }).format(new Date(Number(seconds) * 1000));
-  }
-
-  function setStatus(label, closed = false) {
-    els.statusLabel.textContent = label;
-
-    const dot = els.marketStatus.querySelector(".status-dot");
-    if (dot) dot.classList.toggle("closed", closed);
-  }
-
-  function updateIntervals() {
-    document.querySelectorAll(".interval-btn").forEach(button => {
-      button.classList.toggle(
-        "active",
-        button.dataset.interval === state.interval
-      );
-    });
-
-    els.intervalLabel.textContent = state.interval;
-  }
-
-  function showChartMessage(message, error = false) {
-    els.chartContainer.innerHTML = "";
-
-    const element = document.createElement("div");
-    element.className = `chart-empty${error ? " error" : ""}`;
-    element.textContent = message;
-
-    els.chartContainer.appendChild(element);
-  }
-
-  async function fetchJson(url) {
-    const response = await fetch(url, {
-      headers: { Accept: "application/json" }
-    });
-
-    const body = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      throw new Error(
-        body.message ||
-        body.error ||
-        `Market data request failed with HTTP ${response.status}.`
-      );
+  <style>
+    :root {
+      --bg: #061827;
+      --panel: #0b1f38;
+      --panel-2: #122d4d;
+      --line: #294362;
+      --text: #f4f8ff;
+      --muted: #a9bdd8;
+      --muted-2: #7f99ba;
+      --green: #64d6a2;
+      --red: #ff8b91;
+      --blue: #71b9ff;
     }
 
-    return body;
-  }
-
-  async function getMarketData(symbol, interval) {
-    /*
-     * The repository's shared market-data layer uses /api/market/*.
-     * The fallback keeps the temporary root server.js frontend usable.
-     */
-    try {
-      const [candles, quote] = await Promise.all([
-        fetchJson(
-          `/api/market/candles?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}`
-        ),
-        fetchJson(
-          `/api/market/quote?symbol=${encodeURIComponent(symbol)}`
-        )
-      ]);
-
-      return { candles, quote };
-    } catch (marketApiError) {
-      const legacyCandles = await fetchJson(
-        `/api/candles?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}`
-      );
-
-      return {
-        candles: {
-          symbol: legacyCandles.symbol || symbol,
-          interval,
-          currency: legacyCandles.currency || "USD",
-          timezone: legacyCandles.timezone || "UTC",
-          bars: legacyCandles.bars || [],
-          source: {
-            note: "Legacy Twelve Data candle endpoint."
-          }
-        },
-        quote: null,
-        marketApiError
-      };
+    * {
+      box-sizing: border-box;
     }
-  }
 
-  function renderQuote(quote, candles) {
-    const fallbackBars = candles?.bars || [];
-    const lastBar = fallbackBars[fallbackBars.length - 1];
-    const previousBar = fallbackBars[fallbackBars.length - 2];
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, #12365b, transparent 35%),
+        linear-gradient(180deg, #061827, #04111f);
+      color: var(--text);
+      font: 15px/1.5 Inter, system-ui, sans-serif;
+    }
 
-    const currency =
-      quote?.currency ||
-      candles?.currency ||
-      "USD";
+    button,
+    input {
+      font: inherit;
+    }
 
-    const price =
-      quote?.price ??
-      (lastBar ? Number(lastBar.close) : null);
+    button {
+      cursor: pointer;
+    }
 
-    const change =
-      quote?.change ??
-      (
-        lastBar && previousBar
-          ? Number(lastBar.close) - Number(previousBar.close)
-          : null
+    .app {
+      width: min(1160px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 40px;
+    }
+
+    .topbar,
+    .heading,
+    .chart-header,
+    .price-row,
+    .context-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .topbar {
+      align-items: flex-start;
+      margin-bottom: 18px;
+    }
+
+    .brand {
+      padding-top: 10px;
+      color: #dcecff;
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .search {
+      position: relative;
+      display: flex;
+      flex: 1;
+      gap: 8px;
+      max-width: 620px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(16, 40, 71, .86);
+    }
+
+    .search input {
+      min-width: 0;
+      flex: 1;
+      padding: 7px 8px;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--text);
+    }
+
+    .search input::placeholder {
+      color: var(--muted-2);
+    }
+
+    .search > button {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 8px 12px;
+    }
+
+    .search > button:hover,
+    .interval:hover,
+    .interval.active {
+      border-color: #4d85bd;
+      background: #1b4676;
+    }
+
+    .results {
+      position: absolute;
+      z-index: 10;
+      top: calc(100% + 8px);
+      right: 0;
+      left: 0;
+      display: none;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #081a2d;
+      box-shadow: 0 18px 38px rgba(0, 0, 0, .35);
+    }
+
+    .results.visible {
+      display: block;
+    }
+
+    .result {
+      display: block;
+      width: 100%;
+      padding: 11px 14px;
+      border: 0;
+      border-bottom: 1px solid rgba(153, 178, 209, .12);
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+    }
+
+    .result:hover {
+      background: var(--panel-2);
+    }
+
+    .result small {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+    }
+
+    .panel {
+      padding: clamp(18px, 3vw, 32px);
+      border: 1px solid rgba(153, 178, 209, .2);
+      border-radius: 20px;
+      background: linear-gradient(
+        180deg,
+        rgba(12, 31, 54, .97),
+        rgba(7, 20, 35, .97)
       );
+      box-shadow: 0 20px 48px rgba(0, 0, 0, .25);
+    }
 
-    const changePercent =
-      quote?.changePercent ??
-      (
-        change != null &&
-        previousBar &&
-        Number(previousBar.close) !== 0
-          ? (change / Number(previousBar.close)) * 100
-          : null
-      );
+    .heading {
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
 
-    const companyName =
-      quote?.name ||
-      candles?.symbol ||
-      state.symbol;
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 5vw, 3.25rem);
+      line-height: 1;
+      letter-spacing: -.05em;
+    }
 
-    const exchange =
-      quote?.exchange ||
-      "Exchange unavailable";
+    .ticker {
+      margin: 8px 0 0;
+      color: var(--muted);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
 
-    els.companyName.textContent = companyName;
-    els.ticker.textContent = `${exchange}: ${state.symbol}`;
-    els.exchange.textContent = exchange;
-    els.price.textContent = money(price, currency);
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: #d9eaff;
+      white-space: nowrap;
+    }
 
-    if (change != null || changePercent != null) {
-      const negative = Number(change ?? changePercent) < 0;
-      els.change.className = `change ${negative ? "down" : "up"}`;
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+    }
 
-      const changeParts = [];
+    .dot.closed {
+      background: #8da2bd;
+    }
 
-      if (change != null) {
-        changeParts.push(signedMoney(change, currency));
+    .price-row {
+      justify-content: flex-start;
+      align-items: baseline;
+      flex-wrap: wrap;
+      margin-top: 28px;
+    }
+
+    .price {
+      font-size: clamp(2.8rem, 8vw, 4.8rem);
+      font-weight: 800;
+      letter-spacing: -.06em;
+      line-height: .9;
+    }
+
+    .change {
+      font-weight: 700;
+    }
+
+    .change.up {
+      color: var(--green);
+    }
+
+    .change.down {
+      color: var(--red);
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .meta-card {
+      padding: 13px 15px;
+      border: 1px solid rgba(153, 178, 209, .16);
+      border-radius: 12px;
+      background: rgba(19, 43, 72, .7);
+    }
+
+    .meta-card span {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted-2);
+      font-size: 11px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .chart-header {
+      flex-wrap: wrap;
+      margin-top: 28px;
+    }
+
+    .intervals {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .interval {
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel-2);
+      color: var(--text);
+    }
+
+    .interval[aria-pressed="true"] {
+      border-color: #4d85bd;
+      background: #1b4676;
+    }
+
+    .chart {
+      position: relative;
+      min-height: 300px;
+      margin-top: 12px;
+      overflow: hidden;
+      border: 1px solid rgba(153, 178, 209, .16);
+      border-radius: 14px;
+      background: #071a2e;
+    }
+
+    .chart svg {
+      display: block;
+      width: 100%;
+      height: 430px;
+    }
+
+    .state {
+      display: grid;
+      min-height: 260px;
+      place-items: center;
+      padding: 24px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .state.error {
+      color: #ffc4c8;
+    }
+
+    .tooltip {
+      position: absolute;
+      z-index: 2;
+      display: none;
+      min-width: 205px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: rgba(5, 18, 32, .97);
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.55;
+      white-space: pre-line;
+      pointer-events: none;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, .35);
+    }
+
+    .context {
+      margin-top: 20px;
+      padding: 17px;
+      border: 1px solid rgba(153, 178, 209, .16);
+      border-radius: 14px;
+      background: rgba(12, 29, 48, .8);
+    }
+
+    .context-header {
+      align-items: baseline;
+    }
+
+    .context h2 {
+      margin: 0;
+      font-size: 17px;
+    }
+
+    .context-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .context-item {
+      padding: 12px;
+      border: 1px solid rgba(153, 178, 209, .14);
+      border-radius: 10px;
+      background: rgba(19, 43, 72, .62);
+    }
+
+    .context-item h3 {
+      margin: 0 0 5px;
+      font-size: 14px;
+    }
+
+    .context-item p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .context-item small {
+      display: block;
+      margin-top: 7px;
+      color: var(--muted-2);
+    }
+
+    .x-axis-label {
+      fill: var(--muted);
+      font-size: 11px;
+      text-anchor: middle;
+    }
+
+    .x-axis-line,
+    .x-axis-tick {
+      stroke: rgba(153, 178, 209, .4);
+      stroke-width: 1;
+    }
+
+    .candle {
+      cursor: crosshair;
+      transition: opacity .12s ease;
+    }
+
+    .candle:hover {
+      opacity: .7;
+    }
+
+    @media (max-width: 700px) {
+      .topbar {
+        flex-direction: column;
       }
 
-      if (changePercent != null) {
-        changeParts.push(`(${percent(changePercent)})`);
+      .search {
+        width: 100%;
+        max-width: none;
       }
 
-      els.change.textContent = changeParts.join(" ");
-    } else {
-      els.change.className = "change";
-      els.change.textContent = "Change unavailable";
+      .meta {
+        grid-template-columns: 1fr;
+      }
+
+      .chart svg {
+        height: 350px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <main class="app">
+    <div class="topbar">
+      <div class="brand">CandleView</div>
+
+      <div class="search">
+        <input
+          id="search"
+          value="NVDA"
+          placeholder="Search ticker or company"
+          autocomplete="off"
+        >
+        <button id="searchButton" type="button">Search</button>
+        <div id="results" class="results" aria-live="polite"></div>
+      </div>
+    </div>
+
+    <section class="panel" aria-label="Stock overview">
+      <div class="heading">
+        <div>
+          <h1 id="company">NVIDIA</h1>
+          <div id="ticker" class="ticker">NASDAQ: NVDA</div>
+        </div>
+
+        <div class="status">
+          <span id="statusDot" class="dot"></span>
+          <span id="status">Loading market status…</span>
+        </div>
+      </div>
+
+      <div class="price-row">
+        <div id="price" class="price">—</div>
+        <div id="change" class="change">Loading…</div>
+      </div>
+
+      <div id="note" class="muted">
+        Loading latest available data…
+      </div>
+
+      <div class="meta">
+        <div class="meta-card">
+          <span>Exchange</span>
+          <strong id="exchange">—</strong>
+        </div>
+
+        <div class="meta-card">
+          <span>Last candle</span>
+          <strong id="asOf">—</strong>
+        </div>
+
+        <div class="meta-card">
+          <span>Currency</span>
+          <strong id="currency">—</strong>
+        </div>
+      </div>
+
+      <div class="chart-header">
+        <strong>Price chart</strong>
+
+        <div class="intervals" aria-label="Chart interval">
+          <button class="interval" data-interval="1m" type="button">1m</button>
+          <button class="interval" data-interval="5m" type="button">5m</button>
+          <button class="interval" data-interval="15m" type="button">15m</button>
+          <button class="interval" data-interval="1h" type="button">1h</button>
+          <button
+            class="interval active"
+            data-interval="1D"
+            type="button"
+            aria-pressed="true"
+          >1D</button>
+          <button class="interval" data-interval="1W" type="button">1W</button>
+        </div>
+      </div>
+
+      <div id="chart" class="chart" aria-live="polite">
+        <div class="state">Loading chart…</div>
+      </div>
+
+      <section class="context" aria-label="Market context">
+        <div class="context-header">
+          <h2>Market context</h2>
+          <span id="contextStatus" class="muted">Loading…</span>
+        </div>
+
+        <div id="contextList" class="context-list">
+          <div class="muted">Loading context…</div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      symbol: "NVDA",
+      interval: "1D",
+      currency: "USD",
+      bars: [],
+      searchTimer: null
+    };
+
+    const $ = id => document.getElementById(id);
+
+    function money(value, currency = state.currency) {
+      if (!Number.isFinite(Number(value))) return "—";
+
+      try {
+        return new Intl.NumberFormat(undefined, {
+          style: "currency",
+          currency,
+          maximumFractionDigits: 2
+        }).format(Number(value));
+      } catch {
+        return `${currency} ${Number(value).toFixed(2)}`;
+      }
     }
 
-    if (quote?.asOf) {
-      els.asOf.textContent = formatTimestamp(quote.asOf);
-    } else if (candles?.fetchedAt) {
-      els.asOf.textContent = formatTimestamp(
-        Math.floor(candles.fetchedAt / 1000)
-      );
-    } else {
-      els.asOf.textContent = "—";
+    function signedMoney(value, currency = state.currency) {
+      if (!Number.isFinite(Number(value))) return "—";
+
+      const number = Number(value);
+      const sign = number >= 0 ? "+" : "-";
+
+      return `${sign}${money(Math.abs(number), currency)}`;
     }
 
-    if (quote?.marketStatus) {
+    function formatTime(value) {
+      if (typeof value === "number") {
+        return new Date(value * 1000).toLocaleString();
+      }
+
+      if (typeof value === "string") {
+        const date = new Date(value);
+
+        if (!Number.isNaN(date.getTime())) {
+          return date.toLocaleString();
+        }
+
+        return value;
+      }
+
+      return "—";
+    }
+
+    function formatAxisTime(value) {
+      if (typeof value === "number") {
+        const date = new Date(value * 1000);
+
+        if (["1m", "5m", "15m", "1h"].includes(state.interval)) {
+          return date.toLocaleTimeString([], {
+            hour: "numeric",
+            minute: "2-digit"
+          });
+        }
+
+        return date.toLocaleDateString([], {
+          month: "short",
+          day: "numeric"
+        });
+      }
+
+      const date = new Date(value);
+
+      if (!Number.isNaN(date.getTime())) {
+        return date.toLocaleDateString([], {
+          month: "short",
+          year: state.interval === "1W" ? "2-digit" : undefined
+        });
+      }
+
+      return String(value || "");
+    }
+
+    async function request(path) {
+      const response = await fetch(path, {
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+      const body = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          body.error ||
+          body.message ||
+          `Request failed with HTTP ${response.status}.`
+        );
+      }
+
+      return body;
+    }
+
+    function showChartState(message, error = false) {
+      const element = document.createElement("div");
+
+      element.className = `state${error ? " error" : ""}`;
+      element.textContent = message;
+
+      $("chart").replaceChildren(element);
+    }
+
+    function setStatus(value) {
       const labels = {
         open: "Market open",
         closed: "Market closed",
         pre: "Pre-market",
         post: "After-hours",
-        "pre-market": "Pre-market",
-        "after-hours": "After-hours",
         unknown: "Market status unavailable"
       };
 
-      setStatus(
-        labels[quote.marketStatus] || "Market status unavailable",
-        quote.marketStatus === "closed"
-      );
-    } else {
-      setStatus("Market status unavailable");
+      $("status").textContent = labels[value] || labels.unknown;
+      $("statusDot").classList.toggle("closed", value === "closed");
     }
 
-    const sourceNote =
-      quote?.source?.note ||
-      candles?.source?.note ||
-      "Latest available market data.";
+    function setActiveInterval() {
+      document.querySelectorAll(".interval").forEach(button => {
+        const active = button.dataset.interval === state.interval;
 
-    els.note.textContent = sourceNote;
-  }
-
-  function renderCandles(series) {
-    const candles = Array.isArray(series?.bars)
-      ? series.bars
-      : [];
-
-    state.candles = series;
-
-    if (!candles.length) {
-      showChartMessage("No candle data is available for this interval.", true);
-      return;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
     }
 
-    const width = Math.max(
-      els.chartContainer.clientWidth || 800,
-      320
-    );
-
-    const height = 420;
-    const margin = {
-      top: 18,
-      right: 18,
-      bottom: 26,
-      left: 54
-    };
-
-    const chartWidth =
-      width - margin.left - margin.right;
-
-    const chartHeight =
-      height - margin.top - margin.bottom;
-
-    const lows = candles.map(bar => Number(bar.low));
-    const highs = candles.map(bar => Number(bar.high));
-
-    const minValue = Math.min(...lows);
-    const maxValue = Math.max(...highs);
-    const range = maxValue - minValue || 1;
-    const padding = range * 0.12;
-
-    const yMin = minValue - padding;
-    const yMax = maxValue + padding;
-
-    const xFor = index => {
-      if (candles.length === 1) {
-        return margin.left + chartWidth / 2;
+    function getVisibleBars(bars) {
+      /*
+       * Keep the weekly view focused on the latest year instead of showing
+       * five years of history in the temporary frontend.
+       */
+      if (state.interval === "1W") {
+        return bars.slice(-52);
       }
 
-      return margin.left +
-        (index / (candles.length - 1)) * chartWidth;
-    };
-
-    const yFor = value => {
-      const ratio = (value - yMin) / (yMax - yMin);
-
-      return margin.top +
-        chartHeight -
-        ratio * chartHeight;
-    };
-
-    const svg = document.createElementNS(
-      "http://www.w3.org/2000/svg",
-      "svg"
-    );
-
-    svg.setAttribute(
-      "viewBox",
-      `0 0 ${width} ${height}`
-    );
-
-    svg.setAttribute("role", "img");
-    svg.setAttribute(
-      "aria-label",
-      `${state.symbol} ${state.interval} candlestick chart`
-    );
-
-    for (let index = 0; index <= 5; index += 1) {
-      const y =
-        margin.top +
-        (chartHeight / 5) * index;
-
-      const line = document.createElementNS(
-        "http://www.w3.org/2000/svg",
-        "line"
-      );
-
-      line.setAttribute("x1", margin.left);
-      line.setAttribute("x2", width - margin.right);
-      line.setAttribute("y1", y);
-      line.setAttribute("y2", y);
-      line.setAttribute("stroke", "rgba(153,178,209,.18)");
-
-      svg.appendChild(line);
+      return bars;
     }
 
-    const topLabel = document.createElementNS(
-      "http://www.w3.org/2000/svg",
-      "text"
-    );
+    function renderOverview(data) {
+      const allBars = Array.isArray(data.bars) ? data.bars : [];
+      const bars = getVisibleBars(allBars);
 
-    topLabel.setAttribute("x", "8");
-    topLabel.setAttribute("y", String(margin.top + 8));
-    topLabel.setAttribute("fill", "#a9bfd8");
-    topLabel.setAttribute("font-size", "11");
-    topLabel.textContent = money(maxValue, series.currency || "USD");
-    svg.appendChild(topLabel);
+      state.bars = bars;
+      state.currency = data.currency || "USD";
 
-    const bottomLabel = document.createElementNS(
-      "http://www.w3.org/2000/svg",
-      "text"
-    );
+      $("company").textContent =
+        state.symbol === "NVDA" ? "NVIDIA" : state.symbol;
 
-    bottomLabel.setAttribute("x", "8");
-    bottomLabel.setAttribute("y", String(height - 10));
-    bottomLabel.setAttribute("fill", "#a9bfd8");
-    bottomLabel.setAttribute("font-size", "11");
-    bottomLabel.textContent = money(minValue, series.currency || "USD");
-    svg.appendChild(bottomLabel);
+      $("ticker").textContent =
+        `${data.exchange || "Market"}: ${state.symbol}`;
 
-    candles.forEach((bar, index) => {
-      const open = Number(bar.open);
-      const high = Number(bar.high);
-      const low = Number(bar.low);
-      const close = Number(bar.close);
+      $("exchange").textContent = data.exchange || "—";
+      $("currency").textContent = state.currency;
 
-      const rising = close >= open;
-      const color = rising ? "#64d6a2" : "#ff8b91";
-      const x = xFor(index);
-
-      const wick = document.createElementNS(
-        "http://www.w3.org/2000/svg",
-        "line"
-      );
-
-      wick.setAttribute("x1", x);
-      wick.setAttribute("x2", x);
-      wick.setAttribute("y1", yFor(high));
-      wick.setAttribute("y2", yFor(low));
-      wick.setAttribute("stroke", color);
-      wick.setAttribute("stroke-width", "1.4");
-
-      svg.appendChild(wick);
-
-      const body = document.createElementNS(
-        "http://www.w3.org/2000/svg",
-        "rect"
-      );
-
-      const bodyTop = yFor(Math.max(open, close));
-      const bodyBottom = yFor(Math.min(open, close));
-
-      body.setAttribute("x", x - 4);
-      body.setAttribute("y", bodyTop);
-      body.setAttribute("width", "8");
-      body.setAttribute(
-        "height",
-        Math.max(2, bodyBottom - bodyTop)
-      );
-      body.setAttribute("rx", "1.5");
-      body.setAttribute("fill", color);
-
-      const candleDate = Number.isFinite(Number(bar.time))
-        ? new Date(Number(bar.time) * 1000).toLocaleString()
-        : String(bar.time || "");
-
-      body.setAttribute(
-        "aria-label",
-        `${candleDate}. Open ${money(open, series.currency)}. High ${money(high, series.currency)}. Low ${money(low, series.currency)}. Close ${money(close, series.currency)}.`
-      );
-
-      const title = document.createElementNS(
-        "http://www.w3.org/2000/svg",
-        "title"
-      );
-
-      title.textContent =
-        `${candleDate} · ` +
-        `O ${money(open, series.currency)} · ` +
-        `H ${money(high, series.currency)} · ` +
-        `L ${money(low, series.currency)} · ` +
-        `C ${money(close, series.currency)}`;
-
-      body.appendChild(title);
-      svg.appendChild(body);
-    });
-
-    const note = document.createElement("div");
-    note.className = "chart-note";
-    note.textContent = `${state.interval} candles · ${series.currency || "USD"}`;
-
-    els.chartContainer.replaceChildren(svg, note);
-  }
-
-  async function loadData(symbol = state.symbol, interval = state.interval) {
-    state.symbol = String(symbol || "NVDA").toUpperCase();
-    state.interval = interval || "1D";
-
-    updateIntervals();
-    showChartMessage("Loading market data…");
-
-    els.note.textContent = "Loading latest available market data…";
-
-    try {
-      const { candles, quote, marketApiError } =
-        await getMarketData(state.symbol, state.interval);
-
-      state.quote = quote;
-      state.candles = candles;
-
-      renderQuote(quote, candles);
-      renderCandles(candles);
-
-      if (marketApiError) {
-        els.note.textContent =
-          "Using the temporary legacy data endpoint. " +
-          "The shared market-data route is not mounted in server.js.";
-      }
-
-      loadContext(state.symbol);
-    } catch (error) {
-      setStatus("Market status unavailable");
-
-      els.price.textContent = "—";
-      els.change.className = "change";
-      els.change.textContent = "Unavailable";
-      els.note.textContent = error.message;
-      els.exchange.textContent = "—";
-      els.asOf.textContent = "—";
-
-      showChartMessage(error.message, true);
-      renderContextError(error.message);
-    }
-  }
-
-  async function loadContext(symbol) {
-    els.contextStatus.textContent = "Loading…";
-
-    try {
-      const data = await fetchJson(
-        `/api/context?symbol=${encodeURIComponent(symbol)}`
-      );
-
-      const items = Array.isArray(data.items)
-        ? data.items
-        : [];
-
-      els.contextStatus.textContent =
-        data.status === "available"
-          ? "Live"
-          : "Unavailable";
-
-      if (!items.length) {
-        els.contextList.innerHTML = `
-          <div class="context-item">
-            <h4>Context unavailable</h4>
-            <p>${data.message || "No market context is available."}</p>
-            <small>${data.source || "No source configured"}</small>
-          </div>
-        `;
+      if (!bars.length) {
+        $("price").textContent = "—";
+        $("change").textContent = "No data";
+        $("note").textContent = "No candle data was returned.";
+        showChartState("No candle data was returned.", true);
         return;
       }
 
-      els.contextList.innerHTML = "";
+      const latest = bars[bars.length - 1];
+      const previous = bars[bars.length - 2];
 
-      items.slice(0, 3).forEach(item => {
-        const card = document.createElement("article");
-        card.className = "context-item";
+      $("price").textContent = money(latest.close);
+      $("asOf").textContent = formatTime(latest.time);
 
-        card.innerHTML = `
-          <h4>${item.title || item.headline || "Market context"}</h4>
-          <p>${item.summary || item.description || item.content || ""}</p>
-          <small>${item.source || item.publisher || ""}</small>
-        `;
+      if (previous) {
+        const change = Number(latest.close) - Number(previous.close);
+        const direction = change < 0 ? "down" : "up";
 
-        els.contextList.appendChild(card);
+        $("change").className = `change ${direction}`;
+        $("change").textContent =
+          `${signedMoney(change)} vs prior candle`;
+      } else {
+        $("change").textContent = "Change unavailable";
+      }
+
+      $("note").textContent =
+        "Latest available data from the configured Twelve Data endpoint.";
+
+      setStatus("unknown");
+      renderChart(bars);
+    }
+
+    function renderChart(bars) {
+      if (!bars.length) {
+        showChartState("No candle data available.", true);
+        return;
+      }
+
+      const chart = $("chart");
+      const width = Math.max(chart.clientWidth || 800, 320);
+      const height = 430;
+
+      const margin = {
+        top: 18,
+        right: 18,
+        bottom: 58,
+        left: 64
+      };
+
+      const plotWidth = width - margin.left - margin.right;
+      const plotHeight = height - margin.top - margin.bottom;
+
+      const lows = bars.map(bar => Number(bar.low));
+      const highs = bars.map(bar => Number(bar.high));
+
+      const lowest = Math.min(...lows);
+      const highest = Math.max(...highs);
+      const padding = (highest - lowest || 1) * 0.12;
+
+      const min = lowest - padding;
+      const max = highest + padding;
+
+      const x = index => {
+        if (bars.length === 1) {
+          return margin.left + plotWidth / 2;
+        }
+
+        return margin.left +
+          (index / (bars.length - 1)) * plotWidth;
+      };
+
+      const y = value => {
+        return margin.top +
+          plotHeight -
+          ((value - min) / (max - min)) * plotHeight;
+      };
+
+      const svg = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "svg"
+      );
+
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      svg.setAttribute("role", "img");
+      svg.setAttribute(
+        "aria-label",
+        `${state.symbol} ${state.interval} candlestick chart`
+      );
+
+      // Horizontal gridlines.
+      for (let index = 0; index <= 5; index += 1) {
+        const line = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "line"
+        );
+
+        const lineY = margin.top + plotHeight * index / 5;
+
+        line.setAttribute("x1", margin.left);
+        line.setAttribute("x2", width - margin.right);
+        line.setAttribute("y1", lineY);
+        line.setAttribute("y2", lineY);
+        line.setAttribute("stroke", "rgba(153,178,209,.18)");
+
+        svg.appendChild(line);
+      }
+
+      // Y-axis labels.
+      for (let index = 0; index <= 5; index += 1) {
+        const value = max - ((max - min) * index / 5);
+        const label = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "text"
+        );
+
+        const labelY = margin.top + plotHeight * index / 5;
+
+        label.setAttribute("x", "8");
+        label.setAttribute("y", labelY + 4);
+        label.setAttribute("fill", "#a9bdd8");
+        label.setAttribute("font-size", "11");
+        label.textContent = money(value);
+
+        svg.appendChild(label);
+      }
+
+      // X-axis baseline.
+      const axis = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "line"
+      );
+
+      axis.setAttribute("x1", margin.left);
+      axis.setAttribute("x2", width - margin.right);
+      axis.setAttribute("y1", height - margin.bottom);
+      axis.setAttribute("y2", height - margin.bottom);
+      axis.setAttribute("class", "x-axis-line");
+
+      svg.appendChild(axis);
+
+      // X-axis labels.
+      const labelCount = Math.min(6, bars.length);
+      const labelIndexes = [];
+
+      for (let index = 0; index < labelCount; index += 1) {
+        const barIndex = labelCount === 1
+          ? 0
+          : Math.round(index * (bars.length - 1) / (labelCount - 1));
+
+        if (!labelIndexes.includes(barIndex)) {
+          labelIndexes.push(barIndex);
+        }
+      }
+
+      labelIndexes.forEach(index => {
+        const xPosition = x(index);
+
+        const tick = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "line"
+        );
+
+        tick.setAttribute("x1", xPosition);
+        tick.setAttribute("x2", xPosition);
+        tick.setAttribute("y1", height - margin.bottom);
+        tick.setAttribute("y2", height - margin.bottom + 6);
+        tick.setAttribute("class", "x-axis-tick");
+
+        svg.appendChild(tick);
+
+        const label = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "text"
+        );
+
+        label.setAttribute("x", xPosition);
+        label.setAttribute("y", height - 14);
+        label.setAttribute("class", "x-axis-label");
+        label.textContent = formatAxisTime(bars[index].time);
+
+        svg.appendChild(label);
       });
-    } catch (error) {
-      renderContextError(error.message);
+
+      const tooltip = document.createElement("div");
+
+      tooltip.className = "tooltip";
+      chart.replaceChildren(svg, tooltip);
+
+      bars.forEach((bar, index) => {
+        const open = Number(bar.open);
+        const high = Number(bar.high);
+        const low = Number(bar.low);
+        const close = Number(bar.close);
+        const volume = Number(bar.volume);
+
+        const color = close >= open
+          ? "#64d6a2"
+          : "#ff8b91";
+
+        const xPosition = x(index);
+
+        // Wick.
+        const wick = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "line"
+        );
+
+        wick.setAttribute("x1", xPosition);
+        wick.setAttribute("x2", xPosition);
+        wick.setAttribute("y1", y(high));
+        wick.setAttribute("y2", y(low));
+        wick.setAttribute("stroke", color);
+        wick.setAttribute("stroke-width", "1.4");
+
+        svg.appendChild(wick);
+
+        // Candle body.
+        const body = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "rect"
+        );
+
+        const bodyTop = y(Math.max(open, close));
+        const bodyBottom = y(Math.min(open, close));
+
+        body.setAttribute("x", xPosition - 4);
+        body.setAttribute("y", bodyTop);
+        body.setAttribute("width", "8");
+        body.setAttribute(
+          "height",
+          Math.max(2, bodyBottom - bodyTop)
+        );
+        body.setAttribute("rx", "1.5");
+        body.setAttribute("fill", color);
+        body.setAttribute("class", "candle");
+
+        body.addEventListener("pointerenter", event => {
+          const tooltipWidth = 215;
+          const left = Math.min(
+            event.offsetX + 14,
+            width - tooltipWidth
+          );
+
+          tooltip.style.display = "block";
+          tooltip.style.left = `${Math.max(8, left)}px`;
+          tooltip.style.top = "12px";
+
+          const volumeText = Number.isFinite(volume)
+            ? `\nVolume: ${volume.toLocaleString()}`
+            : "";
+
+          tooltip.textContent =
+            `${formatTime(bar.time)}\n` +
+            `Open: ${money(open)}\n` +
+            `High: ${money(high)}\n` +
+            `Low: ${money(low)}\n` +
+            `Close: ${money(close)}` +
+            volumeText;
+        });
+
+        body.addEventListener("pointerleave", () => {
+          tooltip.style.display = "none";
+        });
+
+        svg.appendChild(body);
+      });
     }
-  }
 
-  function renderContextError(message) {
-    els.contextStatus.textContent = "Unavailable";
+    async function loadData() {
+      setActiveInterval();
+      showChartState("Loading chart…");
 
-    els.contextList.innerHTML = `
-      <div class="context-item">
-        <h4>Context unavailable</h4>
-        <p>${message || "Market context is unavailable."}</p>
-      </div>
-    `;
-  }
+      $("note").textContent =
+        "Loading latest available data…";
 
-  document.querySelectorAll(".interval-btn").forEach(button => {
-    button.addEventListener("click", () => {
-      loadData(state.symbol, button.dataset.interval);
-    });
-  });
+      try {
+        const data = await request(
+          `/api/candles?symbol=${encodeURIComponent(state.symbol)}&interval=${encodeURIComponent(state.interval)}`
+        );
 
-  document.getElementById("searchBtn").addEventListener("click", () => {
-    const symbol = els.searchInput.value.trim();
+        renderOverview(data);
+        loadContext();
+      } catch (error) {
+        $("price").textContent = "—";
+        $("change").textContent = "Unavailable";
+        $("note").textContent = error.message;
+        $("exchange").textContent = "—";
+        $("asOf").textContent = "—";
+        $("currency").textContent = "—";
 
-    if (symbol) {
-      els.results.classList.remove("visible");
-      loadData(symbol, state.interval);
-    }
-  });
-
-  els.searchInput.addEventListener("keydown", event => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-
-      const symbol = els.searchInput.value.trim();
-
-      if (symbol) {
-        els.results.classList.remove("visible");
-        loadData(symbol, state.interval);
+        setStatus("unknown");
+        showChartState(error.message, true);
+        renderContext(error.message, true);
       }
     }
-  });
 
-  updateIntervals();
-  loadData("NVDA", "1D");
-</script>
+    async function loadContext() {
+      $("contextStatus").textContent = "Loading…";
+
+      try {
+        const data = await request(
+          `/api/context?symbol=${encodeURIComponent(state.symbol)}`
+        );
+
+        $("contextStatus").textContent =
+          data.status === "available"
+            ? "Live"
+            : "Unavailable";
+
+        renderContext(
+          data.message || "No live market context is available.",
+          false,
+          data.source
+        );
+      } catch (error) {
+        renderContext(error.message, true);
+      }
+    }
+
+    function renderContext(message, error = false, source = "") {
+      const item = document.createElement("div");
+
+      item.className = "context-item";
+      item.innerHTML = `
+        <h3>${error ? "Context unavailable" : "No live context"}</h3>
+        <p>${message}</p>
+        <small>${source || "No trusted news provider configured."}</small>
+      `;
+
+      $("contextList").replaceChildren(item);
+    }
+
+    async function searchCompanies(query) {
+      try {
+        const data = await request(
+          `/api/search?q=${encodeURIComponent(query)}`
+        );
+
+        const results = Array.isArray(data.results)
+          ? data.results
+          : [];
+
+        const elements = results.map(item => {
+          const button = document.createElement("button");
+
+          button.type = "button";
+          button.className = "result";
+          button.innerHTML = `
+            <strong>${item.symbol}</strong>
+            <small>${item.name || "Company"} · ${item.exchange || "Market"}</small>
+          `;
+
+          button.addEventListener("click", () => {
+            state.symbol = item.symbol;
+            $("search").value = item.symbol;
+            $("results").classList.remove("visible");
+            loadData();
+          });
+
+          return button;
+        });
+
+        $("results").replaceChildren(...elements);
+        $("results").classList.toggle(
+          "visible",
+          elements.length > 0
+        );
+      } catch {
+        $("results").classList.remove("visible");
+      }
+    }
+
+    document.querySelectorAll(".interval").forEach(button => {
+      button.addEventListener("click", () => {
+        state.interval = button.dataset.interval;
+        loadData();
+      });
+    });
+
+    $("searchButton").addEventListener("click", () => {
+      const value = $("search").value.trim().toUpperCase();
+
+      if (value) {
+        $("results").classList.remove("visible");
+        state.symbol = value;
+        loadData();
+      }
+    });
+
+    $("search").addEventListener("keydown", event => {
+      if (event.key !== "Enter") return;
+
+      const value = $("search").value.trim().toUpperCase();
+
+      if (value) {
+        $("results").classList.remove("visible");
+        state.symbol = value;
+        loadData();
+      }
+    });
+
+    $("search").addEventListener("input", () => {
+      clearTimeout(state.searchTimer);
+
+      const value = $("search").value.trim();
+
+      if (!value) {
+        $("results").classList.remove("visible");
+        return;
+      }
+
+      state.searchTimer = setTimeout(
+        () => searchCompanies(value),
+        250
+      );
+    });
+
+    document.addEventListener("click", event => {
+      if (!event.target.closest(".search")) {
+        $("results").classList.remove("visible");
+      }
+    });
+
+    window.addEventListener("resize", () => {
+      if (state.bars.length) {
+        renderChart(state.bars);
+      }
+    });
+
+    loadData();
+  </script>
+</body>
+</html>
