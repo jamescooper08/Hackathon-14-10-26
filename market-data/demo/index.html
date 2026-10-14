@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NVDA chart demo</title>
+  <link rel="stylesheet" href="../chart/chart.css">
+  <style>
+    /* Demo-only layout. The real page layout and theme belong to the integration owner. */
+    body { margin: 0; background: #07101f; color: #e8eefb; font: 15px/1.5 system-ui, sans-serif; }
+    main { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 12px; }
+    h1 { margin: 0; font-size: 20px; }
+    .bar { display: flex; flex-wrap: wrap; gap: 6px; }
+    button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid #1b2c52; background: #0b1730; color: inherit; cursor: pointer; }
+    button[aria-pressed="true"] { background: #5b8def; border-color: #5b8def; color: #06122a; font-weight: 600; }
+    #quote { color: #9fb2d3; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>NVIDIA (NVDA) &mdash; chart demo</h1>
+    <div id="quote" role="status">Loading quote…</div>
+    <div class="bar" id="intervals" role="group" aria-label="Candle interval"></div>
+    <div id="chart"></div>
+  </main>
+  <script type="module">
+    import { createMarketStore } from '../client/store.mjs';
+    import { createHttpProvider } from '../client/http-provider.mjs';
+    import { mountCandleChart } from '../chart/nvda-chart.mjs';
+    import { INTERVALS } from '../shared/intervals.mjs';
+
+    const store = createMarketStore({ provider: createHttpProvider(), symbol: 'NVDA' });
+    mountCandleChart(document.getElementById('chart'), store);
+
+    const bar = document.getElementById('intervals');
+    const quote = document.getElementById('quote');
+    store.subscribe(s => {
+      bar.replaceChildren(...s.supportedIntervals.map(id => {
+        const b = document.createElement('button');
+        b.textContent = INTERVALS[id].label;
+        b.setAttribute('aria-pressed', String(id === s.interval));
+        b.onclick = () => store.setInterval(id);
+        return b;
+      }));
+      const q = s.quote;
+      quote.textContent = q
+        ? `${q.price.toFixed(2)} ${q.currency}` +
+          (q.changePercent == null ? '' : ` (${q.change >= 0 ? '+' : ''}${q.changePercent}%)`) +
+          ` · market ${q.marketStatus} · as of ${new Date(q.asOf * 1000).toLocaleString()} · ${q.source.note}`
+        : s.status === 'error' ? 'Quote unavailable.' : 'Loading quote…';
+    });
+    store.start();
+  </script>
+</body>
+</html>
